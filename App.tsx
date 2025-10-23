@@ -3,10 +3,47 @@ import { GameStatus, GameState, HitType, Question, AnswerResult, Team } from './
 import { advanceRunners } from './utils/gameLogic';
 import Scoreboard from './components/Scoreboard';
 import BaseballDiamond from './components/BaseballDiamond';
-import { generateQuestion } from './services/geminiService';
-import { BatIcon, BookIcon, UsersIcon, TimerIcon } from './components/IconComponents';
+import { generateQuestion, initializeAiClient } from './services/geminiService';
+import { BatIcon, BookIcon, UsersIcon, TimerIcon, KeyIcon } from './components/IconComponents';
 
 const TOTAL_INNINGS = 3;
+
+// Helper component for API Key input
+const ApiKeyScreen: React.FC<{ onApiKeySubmit: (key: string) => void }> = ({ onApiKeySubmit }) => {
+    const [apiKey, setApiKey] = useState('');
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (apiKey.trim()) {
+            onApiKeySubmit(apiKey.trim());
+        }
+    };
+
+    return (
+        <div className="w-full h-full flex flex-col items-center justify-center text-center p-4">
+            <KeyIcon className="w-24 h-24 text-amber-800 mb-4" />
+            <h1 className="text-4xl md:text-5xl font-bold text-blue-900 mb-2">Configuración Requerida</h1>
+            <h2 className="text-xl md:text-2xl text-amber-700 mb-8">Por favor, introduce tu API Key de Google AI</h2>
+            <form onSubmit={handleSubmit} className="bg-white/60 backdrop-blur-sm p-8 rounded-2xl shadow-lg w-full max-w-md flex flex-col gap-6">
+                <p className="text-gray-700">Para generar las preguntas, el juego necesita una API key de Gemini. Puedes obtener una gratis en <a href="https://aistudio.google.com/keys" target="_blank" rel="noopener noreferrer" className="text-blue-700 font-bold underline">Google AI Studio</a>.</p>
+                <div className="relative">
+                    <KeyIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 text-gray-400" />
+                    <input
+                        type="password"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        className="w-full pl-12 pr-4 py-3 text-lg border-2 border-blue-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all"
+                        placeholder="Pega tu API Key aquí"
+                    />
+                </div>
+                <button type="submit" className="w-full bg-amber-600 text-white font-bold text-xl py-4 rounded-lg hover:bg-amber-700 transition-transform transform hover:scale-105 shadow-md">
+                    Guardar y Jugar
+                </button>
+            </form>
+        </div>
+    );
+};
+
 
 // Helper component defined outside App to prevent re-creation on re-renders
 const SetupScreen: React.FC<{ onStart: (team1: string, team2: string) => void }> = ({ onStart }) => {
@@ -199,11 +236,24 @@ const App: React.FC = () => {
     const [gameState, setGameState] = useState<GameState | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
-    // Fix: Add state to track selected difficulty to fix bug with hitType on answer.
     const [selectedDifficulty, setSelectedDifficulty] = useState<HitType | null>(null);
     const [lastResult, setLastResult] = useState<AnswerResult | null>(null);
     const [timer, setTimer] = useState(60);
     const [timerId, setTimerId] = useState<NodeJS.Timeout | null>(null);
+    const [isApiKeySet, setIsApiKeySet] = useState(false);
+
+    useEffect(() => {
+        const key = process.env.API_KEY || localStorage.getItem('GEMINI_API_KEY');
+        if (key) {
+            try {
+                initializeAiClient(key);
+                setIsApiKeySet(true);
+            } catch (error) {
+                console.error(error);
+                setIsApiKeySet(false);
+            }
+        }
+    }, []);
 
     useEffect(() => {
         if (status === GameStatus.QuestionAsk && timer > 0) {
@@ -211,15 +261,25 @@ const App: React.FC = () => {
             setTimerId(id);
         } else if (timer === 0 && status === GameStatus.QuestionAsk) {
             if(timerId) clearTimeout(timerId);
-            handleAnswer(""); // Empty answer for timeout
+            handleAnswer("");
         }
         
         return () => {
             if (timerId) clearTimeout(timerId);
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [status, timer]);
 
+
+    const handleApiKeySubmit = (key: string) => {
+        try {
+            initializeAiClient(key);
+            localStorage.setItem('GEMINI_API_KEY', key);
+            setIsApiKeySet(true);
+        } catch (error) {
+            console.error(error);
+            alert("Hubo un error al inicializar el cliente AI. Verifica tu clave.");
+        }
+    };
 
     const handleStartGame = (team1Name: string, team2Name: string) => {
         setGameState({
@@ -247,7 +307,7 @@ const App: React.FC = () => {
             setTimer(60);
             setStatus(GameStatus.QuestionAsk);
         } else {
-            alert("No se pudo generar la pregunta. Por favor, intenta de nuevo.");
+            // Error alert is handled in the service
             setStatus(GameStatus.Playing);
             setSelectedDifficulty(null);
         }
@@ -307,7 +367,7 @@ const App: React.FC = () => {
                     });
                 }
                 setStatus(GameStatus.Playing);
-            }, 2000); // 2 second pause for team switch
+            }, 2000);
         } else {
              setGameState(newGameState);
         }
@@ -337,6 +397,10 @@ const App: React.FC = () => {
 
 
     const renderGameContent = () => {
+        if (!isApiKeySet) {
+            return <ApiKeyScreen onApiKeySubmit={handleApiKeySubmit} />;
+        }
+    
         switch (status) {
             case GameStatus.Setup:
                 return <SetupScreen onStart={handleStartGame} />;
@@ -383,7 +447,6 @@ const App: React.FC = () => {
                     <ResultModal result={lastResult} onClose={handleCloseResult} isOut={!lastResult.isCorrect && gameState!.outs + 1 >= 3} />
                 )}
             </div>
-             {/* Fix: Replaced non-standard `style jsx global` with a standard style tag for React. */}
              <style>{`
                 @keyframes fade-in-up {
                     0% {
